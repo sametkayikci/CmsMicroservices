@@ -1,0 +1,108 @@
+version: "3.9"
+
+networks:
+  cmsnet:
+    driver: bridge
+
+volumes:
+  pgdata:
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: cms_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      cmsnet:
+        aliases:
+          - postgres
+
+  redis:
+    image: redis:7
+    container_name: cms_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      cmsnet:
+        aliases:
+          - redis
+
+  usersapi:
+    build:
+      context: ./Services/Users/Users.Api   
+      dockerfile: Dockerfile
+    image: cms/users.api:latest
+    container_name: users.api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=users_db;Username=postgres;Password=postgres
+      Redis__Connection: redis:6379
+      Services__ContentsBaseUrl: http://contents.api:8080
+      Internal__Key: very-secret-internal-key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "5001:8080"
+    networks:
+      cmsnet:
+        aliases:
+          - users.api
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:8080/health || exit 1" ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    
+
+  contentsapi:
+    build:
+      context: ./Services/Contents/Contents.Api   
+      dockerfile: Dockerfile
+    image: cms/contents.api:latest
+    container_name: contents.api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=contents_db;Username=postgres;Password=postgres
+      Redis__Connection: redis:6379
+      Services__UsersBaseUrl: http://users.api:8080
+      Internal__Key: very-secret-internal-key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "5002:8080"
+    networks:
+      cmsnet:
+        aliases:
+          - contents.api
+    restart: unless-stopped
+  
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:8080/health || exit 1" ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
